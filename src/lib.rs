@@ -351,7 +351,7 @@ where
         }
 
         stream::iter(ids.clone().into_iter().zip(req_seq.into_iter()))
-            .for_each_concurrent(concurrency, async |v| {
+            .for_each_concurrent(concurrency, |v| async {
                 self.tx.lock().await.send(v).await.unwrap();
             })
             .await;
@@ -555,9 +555,12 @@ where
 
     tokio::spawn(async move {
         resp_rx
-            .for_each_concurrent(64, async |(id, res)| {
-                if let Some(tx) = pending.take(id) {
-                    let _ = tx.send(res);
+            .for_each_concurrent(64, |(id, res)| {
+                let pending = pending.clone();
+                async move {
+                    if let Some(tx) = pending.take(id) {
+                        let _ = tx.send(res);
+                    }
                 }
             })
             .await;

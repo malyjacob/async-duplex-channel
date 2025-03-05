@@ -1,7 +1,7 @@
 [package]
 name = "async-duplex-channel"
-version = "0.1.0"
-edition = "2024"
+version = "0.1.1"
+edition = "2021"
 authors = ["malyjacob926@gmail.com"]
 description = "An asynchronous duplex communication channel between multiple clients and a single responder in different asynchronous blocks."
 license = "MIT"              # 许可证
@@ -10,7 +10,7 @@ keywords = ["async", "channel", "duplex", "tokio", "concurrency"]
 categories = ["asynchronous", "concurrency"]
 
 [dependencies]
-futures = { version = "0.3.31", features = ["unstable"] }
+futures = "0.3.31"
 sharded-slab = "0.1.7"
 thiserror = "2.0.12"
 tokio = { version = "1.43.0", features = ["full"] }
