@@ -6,7 +6,7 @@ fn main() {
     let rt = Runtime::new().unwrap();
     rt.block_on(async {
         // Create a channel with a buffer size of 64 and a default timeout of 2 seconds.
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
 
         // Build the responder with a simple echo handler.
         let responder = responder_builder.build(|req: String| async move { req });

@@ -8,7 +8,7 @@ fn bench_single_request() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
@@ -27,7 +27,7 @@ fn bench_batch_requests() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
@@ -48,7 +48,7 @@ fn bench_fixed_concurrency() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
@@ -71,7 +71,7 @@ fn bench_dynamic_concurrency() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
@@ -94,7 +94,7 @@ fn bench_single_request_timeout() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
@@ -117,7 +117,7 @@ fn bench_batch_requests_timeout() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async move {
-        let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+        let (client, responder_builder) = channel(64, Duration::from_secs(2));
         let responder = responder_builder.build(|req: String| async move { req });
 
         tokio::spawn(async move {
