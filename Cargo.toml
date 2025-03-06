@@ -1,6 +1,6 @@
 [package]
 name = "async-duplex-channel"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["malyjacob926@gmail.com"]
 description = "An asynchronous duplex communication channel between multiple clients and a single responder in different asynchronous blocks."
