@@ -139,10 +139,12 @@
 //! ## License
 //! This library is licensed under the MIT License. See the LICENSE file for details.
 
-use std::sync::Arc;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use future::FutureExt;
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::prelude::*;
@@ -217,10 +219,21 @@ where
     ///
     /// # Returns
     /// A `Responder` instance ready to process requests.
-    pub fn build<Fut: Future<Output = Resp> + Send, F: (FnMut(Req) -> Fut) + Send + Sync>(
+    pub fn build<
+        Fut: Future<Output = Resp> + Send + 'static,
+        F: (FnMut(Req) -> Fut) + Send + 'static,
+    >(
         self,
-        handler: F,
-    ) -> Responder<Req, Resp, Fut, F> {
+        mut handler: F,
+    ) -> Responder<Req, Resp> {
+        // let hdl = Box::pin(move |req: Req| {
+
+        // });
+        let hdl = move |req: Req| {
+            let pinned_fut: InnerPinBoxFuture<Resp> = Box::pin(handler(req));
+            pinned_fut
+        };
+        let handler: PinBoxHandler<Req, Resp> = Box::pin(hdl);
         Responder {
             req_rx: self.req_rx,
             resp_tx: self.resp_tx,
@@ -228,6 +241,9 @@ where
         }
     }
 }
+
+type InnerPinBoxFuture<Resp> = Pin<Box<dyn Future<Output = Resp> + Send>>;
+type PinBoxHandler<Req, Resp> = Pin<Box<dyn (FnMut(Req) -> InnerPinBoxFuture<Resp>) + Send>>;
 
 /// A responder that processes incoming requests and sends back responses.
 ///
@@ -238,16 +254,16 @@ where
 /// - `Resp`: The type of the response, must be `Send + Sync + 'static`.
 /// - `Fut`: The future returned by the request handler.
 /// - `F`: The type of the request handler function.
-pub struct Responder<Req, Resp, Fut, F>
+pub struct Responder<Req, Resp>
 where
     Req: Send + Sync + 'static,
     Resp: Send + Sync + 'static,
-    Fut: Future<Output = Resp> + Send,
-    F: (FnMut(Req) -> Fut) + Send + Sync,
+    // Fut: Future<Output = Resp> + Send,
+    // F: (FnMut(Req) -> Fut) + Send + Sync,
 {
     req_rx: mpsc::Receiver<(usize, Req)>,
     resp_tx: mpsc::Sender<(usize, Resp)>,
-    handler: F,
+    handler: PinBoxHandler<Req, Resp>,
 }
 
 /// Represents the concurrency strategy for processing requests.
@@ -274,7 +290,7 @@ where
     /// # Returns
     /// - `Ok(Resp)`: The response from the server.
     /// - `Err(Error)`: An error if the request fails or times out.
-    pub async fn request_timeout(&mut self, req: Req, timeout: Duration) -> Result<Resp, Error> {
+    pub async fn request_timeout(&self, req: Req, timeout: Duration) -> Result<Resp, Error> {
         let (tx, rx) = oneshot::channel();
 
         let id = match self.pending.insert(tx) {
@@ -313,7 +329,7 @@ where
     /// # Returns
     /// - `Ok(Resp)`: The response from the server.
     /// - `Err(Error)`: An error if the request fails or times out.
-    pub async fn request(&mut self, req: Req) -> Result<Resp, Error> {
+    pub async fn request(&self, req: Req) -> Result<Resp, Error> {
         self.request_timeout(req, self.timeout).await
     }
 
@@ -328,7 +344,7 @@ where
     /// - `Ok(Vec<Resp>)`: A vector of responses from the server.
     /// - `Err(Error)`: An error if any request fails or times out.
     pub async fn request_batch_timeout<ReqSeq>(
-        &mut self,
+        &self,
         reqs: ReqSeq,
         timeout: Duration,
         concurrency: usize,
@@ -383,7 +399,7 @@ where
     /// - `Ok(Vec<Resp>)`: A vector of responses from the server.
     /// - `Err(Error)`: An error if any request fails or times out.
     pub async fn request_batch<ReqSeq>(
-        &mut self,
+        &self,
         reqs: ReqSeq,
         concurrency: usize,
     ) -> Result<Vec<Resp>, Error>
@@ -395,12 +411,10 @@ where
     }
 }
 
-impl<Req, Resp, Fut, F> Responder<Req, Resp, Fut, F>
+impl<Req, Resp> Responder<Req, Resp>
 where
     Req: Send + Sync + 'static,
     Resp: Send + Sync + 'static,
-    Fut: Future<Output = Resp> + Send,
-    F: (FnMut(Req) -> Fut) + Send + Sync,
 {
     /// Processes incoming requests using the specified concurrency strategy.
     ///
@@ -449,8 +463,8 @@ where
         } = self;
         req_rx
             .map(move |(id, req)| {
-                let handler = Box::pin(handler(req));
-                let fut = handler;
+                let hdl = unsafe { handler.as_mut().get_unchecked_mut() };
+                let fut = hdl(req);
                 fut.map(move |resp| Ok((id, resp)))
             })
             .buffer_unordered(concurrency)
@@ -491,7 +505,9 @@ where
                 let concurrency = Arc::clone(&concurrency);
                 let start = Instant::now();
 
-                let fut = Box::pin(handler(req));
+                let hdl = unsafe { handler.as_mut().get_unchecked_mut() };
+
+                let fut = hdl(req);
 
                 fut.map(move |resp| {
                     let dur = start.elapsed();
@@ -580,7 +596,7 @@ mod tests {
     fn test_single_request() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -597,7 +613,7 @@ mod tests {
     fn test_batch_requests() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -618,7 +634,7 @@ mod tests {
     fn test_fixed_concurrency() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -638,7 +654,7 @@ mod tests {
     fn test_dynamic_concurrency() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -658,7 +674,7 @@ mod tests {
     fn test_single_request_timeout() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -678,7 +694,7 @@ mod tests {
     fn test_batch_requests_timeout() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move { req });
 
             tokio::spawn(async move {
@@ -702,7 +718,7 @@ mod tests {
     fn test_request_failure() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move {
                 if req == "fail" {
                     Err(Error::InternalError("Request failed".into()))
@@ -725,7 +741,7 @@ mod tests {
     fn test_request_timeout() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (mut client, responder_builder) = channel(64, Duration::from_secs(2));
+            let (client, responder_builder) = channel(64, Duration::from_secs(2));
             let responder = responder_builder.build(|req: String| async move {
                 tokio::time::sleep(Duration::from_secs(3)).await;
                 req
